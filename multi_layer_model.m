@@ -1,389 +1,129 @@
-% Multilayer material model to calculate reverberation time and Qd
-clear;close all;clc
-% 设置频点和墙层数
-N_layers = 3;
-f=transpose(1e9:1e8:6e9); %——————设置频点/频带宽 为打印使为列矩阵
-Length_frequency=length(f);
-% 三层墙体结构
-num_type_wall=0;
-for type_wall = [1 2 3 4] % type_wall 依次计算承重墙，隔墙和地砖天花板，以及加了玻璃的窗户
-    num_type_wall= num_type_wall+1;
-%% 计算承重墙 厚度 220mm
-% 承重墙结构为 石膏灰-混凝土-石膏灰
-if type_wall ==1
-        t=0;
-for k=[15 19 15] % —— Gypsum plaster (5mm), Concrete with small gravel(220mm), Gypsum plaster (5mm)
-ep=load('epsilon_paper_tabel.txt'); %20种材料的参数
-e_INF=ep(k,1);e_s=ep(k,2);sigma_s=ep(k,3);r_t=ep(k,4);arf=ep(k,5); %对应材料的cole-cole模型的参数
-w=2*pi*f;
-miu0=(4*pi)*1e-7;
-e0=1./(36*pi)*1e-9;
-e_c2=e_INF+(e_s-e_INF)./(1+power(1i*w*r_t,1-arf))+sigma_s./(1i*w*e0); % Cole-Cole
-RE=real(e_c2);
-IMG=-imag(e_c2);
-Tan_G=IMG./RE; 
-miu_2r=f./f.*1;%相对磁导率/为写入文档保证矩阵长度一致为*（f./f的单位矩阵）
-sigmma=f./f.*0;
-t=t+1;
-epsilon_r(:,t)=e_c2;
-end
-%% layers
-atmosphere = ones(size(epsilon_r, 1),1);
-epsilon_r=[atmosphere,epsilon_r,atmosphere];
-for m=1:Length_frequency  
-for n=1:N_layers+2
-    omega(:,n)=2*pi*f; 
-    epsilon(m,:)=e0.*epsilon_r(m,:);
-    gama(m,n)=1i*omega(m,n).*sqrt(epsilon(m,n).*miu0);
-    d(m,:)=[0,0.005,0.22,0.005,0];  % d 厚度，注意切换材料时这里需要更改 夹层是小砾石混凝土 No.19
-end
-end
-for m=1:Length_frequency
-for n=1:N_layers+2
-    if n==1
-        theta(m,n)=0/180*pi; 
-    else
-        theta(m,n)=asin(gama(m,n-1).*sin(theta(m,n-1))./gama(m,n));
+function [SUM_Solid_Angle_mean_R, SUM_Solid_Angle_mean_T, SUM_Solid_Angle_mean_R_T] = multi_layer_model(frequency, total_thickness, material_id_vector, epsilon_params)
+% multi_layer_model  计算三层材料结构的反射/透射立体角功率比
+%
+% 输入参数：
+%   frequency (Hz)            - 频率向量，例如 [1e9; 1.1e9; ...]（列向量）
+%   total_thickness (m)       - 中间层材料厚度，例如 0.22 表示0.22米
+%   material_id_vector        - 长度为3的材料编号向量，例如 [15 19 15] 表示三层材料的ID（对应 epsilon_params 的行索引）
+%   epsilon_params (N×5 矩阵) - 包含N种材料 Cole-Cole模型参数的矩阵，每行格式 [e_inf, e_s, sigma_s, tau, alpha]
+%
+% 输出参数：
+%   SUM_Solid_Angle_mean_R   - 仅反射能量损耗（随频率变化的列向量，长度为 length(frequency)）
+%   SUM_Solid_Angle_mean_T   - 仅透射能量比例（同上）
+%   SUM_Solid_Angle_mean_R_T - 综合反射+透射损耗（同上）
+
+    % 确保频率为列向量
+    f = frequency(:);
+    Length_frequency = length(f);
+    N_layers = length(material_id_vector);  % 三层结构（应为3）
+    
+    % 真空介电常数和磁导率常数
+    miu0 = (4*pi)*1e-7;             % 真空磁导率 μ0
+    e0   = 1/(36*pi) * 1e-9;        % 真空介电常数 ε0
+    
+    % 每种材料使用 Cole-Cole 模型计算复介电常数 (frequency-dependent)
+    epsilon_r_internal = zeros(Length_frequency, N_layers);  % 存储每层材料的相对介电常数 (复数)
+    w = 2*pi * f;  % 角频率向量
+    
+    for ii = 1:N_layers
+        material_id = material_id_vector(ii);
+        % 提取该材料的 Cole-Cole 参数
+        e_inf   = epsilon_params(material_id, 1);
+        e_s     = epsilon_params(material_id, 2);
+        sigma_s = epsilon_params(material_id, 3);
+        tau     = epsilon_params(material_id, 4);
+        alpha   = epsilon_params(material_id, 5);
+        % Cole-Cole 模型计算复介电常数 (相对介电常数)
+        epsilon_complex = e_inf + (e_s - e_inf) ./ (1 + (1i * w * tau).^(1 - alpha)) ...
+                                + sigma_s ./ (1i * w * e0);
+        epsilon_r_internal(:, ii) = epsilon_complex;
     end
-phi(m,n)=d(m,n).*gama(m,n).*cos(theta(m,n));
-end
-end
-
-for m=1:Length_frequency   
-for n=N_layers+2:-1:1
-    if n==N_layers+2
-    A(m,n)=1;
-    C(m,n)=1;
-    B(m,n)=0;
-    D(m,n)=0;
-    elseif n<N_layers+2 
-Y(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n+1)./epsilon(m,n));
-Z(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n)./epsilon(m,n+1));  
-A(m,n)=exp(phi(m,n))./2.*(A(m,n+1).*(1+Y(m,n+1))+B(m,n+1).*(1-Y(m,n+1)));
-B(m,n)=exp(-phi(m,n))./2.*(A(m,n+1).*(1-Y(m,n+1))+B(m,n+1).*(1+Y(m,n+1)));
-C(m,n)=exp(phi(m,n))./2.*(C(m,n+1).*(1+Z(m,n+1))+D(m,n+1).*(1-Z(m,n+1)));
-D(m,n)=exp(-phi(m,n))./2.*(C(m,n+1).*(1-Z(m,n+1))+D(m,n+1).*(1+Z(m,n+1)));
+    
+    % 构建包含空气层的五层结构介电常数矩阵 (相对介电常数):
+    % 三层结构夹在两侧空气中 -> 层序：[空气, 材料1, 材料2, 材料3, 空气]
+    atmosphere_col = ones(Length_frequency, 1);  % 空气的相对介电常数约为1
+    epsilon_r = [atmosphere_col, epsilon_r_internal, atmosphere_col];  % 尺寸: (Length_frequency × (N_layers+2))
+    
+    % 定义各层厚度 (m): [空气厚度, 材料1厚度, 材料2厚度, 材料3厚度, 空气厚度]
+    % 空气层视为半无限厚度，这里用0表示
+    d = zeros(1, N_layers + 2);
+    d(1) = 0; 
+    d(end) = 0;
+    % 两侧材料（材料1和材料3）厚度固定为5mm
+    if N_layers >= 1, d(2) = 0.005; end        % 第一层材料厚度 5 mm
+    if N_layers >= 3, d(end-1) = 0.005; end    % 第三层材料厚度 5 mm
+    if N_layers >= 2, d(3) = total_thickness; end  % 中间层材料厚度 (由参数给定)
+    
+    % 计算各层的绝对介电常数 ε (ε0 * ε_r) 和传播常数 gama
+    epsilon_abs = e0 * epsilon_r;   % (Length_frequency × (N_layers+2)) 每层介质的绝对介电常数
+    % 计算传播常数 gama = i * ω * sqrt(ε * μ0)  (长度: Length_frequency × (N_layers+2))
+    omega_matrix = repmat(2*pi*f, 1, N_layers+2);  % 将角频率向量扩展成矩阵
+    gama = 1i * omega_matrix .* sqrt(epsilon_abs * miu0);
+    
+    % 计算各层的入射角（Snell定律）和相位厚度 phi
+    theta = zeros(Length_frequency, N_layers+2);
+    theta(:,1) = 0;  % 入射层（空气）入射角 = 0 (法向入射)
+    % 由于法向入射，后续层的 theta 皆为 0，但这里保留一般形式
+    for n = 2:(N_layers+2)
+        % Snell定律计算折射角： sin(theta_n) = (gama_{n-1}/gama_n) * sin(theta_{n-1})
+        theta(:, n) = asin((gama(:, n-1) ./ gama(:, n)) .* sin(theta(:, n-1)));
     end
-end
-end
- 
-RV=B(:,1)./A(:,1);
-RH=D(:,1)./C(:,1);
-TV=1./A(:,1);
-TH=1./C(:,1);
- 
-Reflection_vertical(:,num_type_wall)=RV; 
-Reflection_parallel(:,num_type_wall)=RH; 
-Transmission_vertical(:,num_type_wall)=TV; 
-Transmission_parallel(:,num_type_wall)=TH; 
-
-for nn=1:1:Length_frequency 
-    N_integral=1000;%积分N等分
-    n_theta=(pi/2-0)/N_integral; %分成N等份 N+1次求和
-    theta_i=0:n_theta:pi/2;%入射角用于积分求和
-    SUM_Solid_Angle_mean_R(nn,num_type_wall)=sum((1-1/2*(abs(Reflection_vertical(nn,num_type_wall)).^2+abs(Reflection_parallel(nn,num_type_wall)).^2)).*cos(theta_i).*sin(theta_i)).*n_theta;
-end
-
-%% 计算隔墙
-% 隔墙结构为 石膏灰-石膏板-石膏灰
-elseif type_wall == 2
-    t=0;
-    epsilon_r = zeros(Length_frequency,3); % 清除上个材料的er值
-    d=zeros(Length_frequency,5);
-for k=[15 16 15] % —— Gypsum plaster (5mm), Plasterboard(18mm), Gypsum plaster (5mm)
-ep=load('epsilon_paper_tabel.txt'); %20种材料的参数
-e_INF=ep(k,1);e_s=ep(k,2);sigma_s=ep(k,3);r_t=ep(k,4);arf=ep(k,5); %对应材料的cole-cole模型的参数
-w=2*pi*f;
-miu0=(4*pi)*1e-7;
-e0=1./(36*pi)*1e-9;
-e_c2=e_INF+(e_s-e_INF)./(1+power(1i*w*r_t,1-arf))+sigma_s./(1i*w*e0); % Cole-Cole
-RE=real(e_c2);
-IMG=-imag(e_c2);
-Tan_G=IMG./RE; 
-miu_2r=f./f.*1;%相对磁导率/为写入文档保证矩阵长度一致为*（f./f的单位矩阵）
-sigmma=f./f.*0;
-t=t+1;
-epsilon_r(:,t)=e_c2;
-end
-%% layers
-atmosphere = ones(size(epsilon_r, 1),1);
-epsilon_r=[atmosphere,epsilon_r,atmosphere];
-for m=1:Length_frequency  
-for n=1:N_layers+2
-    omega(:,n)=2*pi*f; 
-    epsilon(m,:)=e0.*epsilon_r(m,:);
-    gama(m,n)=1i*omega(m,n).*sqrt(epsilon(m,n).*miu0);
-    d(m,:)=[0,0.005,0.018,0.005,0];  % d 厚度，注意切换材料时这里需要更改 夹层是石膏板 No.16
-end
-end
-for m=1:Length_frequency
-for n=1:N_layers+2
-    if n==1
-        theta(m,n)=0/180*pi; 
-    else
-        theta(m,n)=asin(gama(m,n-1).*sin(theta(m,n-1))./gama(m,n));
+    % 计算相位因子 phi(m,n) = k_n * d_n * cos(theta_n)，其中 k_n = gama_n (传播常数)
+    cos_theta = cos(theta);
+    % 将厚度行向量扩展为矩阵 (每个频点一行，厚度相同)
+    d_matrix = repmat(d, Length_frequency, 1);
+    % phi 为 (Length_frequency × (N_layers+2)) 矩阵
+    phi = d_matrix .* gama .* cos_theta;
+    
+    % 使用传输矩阵法计算反射/透射系数（垂直和水平极化）
+    % 初始化递推矩阵 A, B, C, D（每行为一个频率点，每列对应一层边界条件）
+    A = zeros(Length_frequency, N_layers+2);
+    B = zeros(Length_frequency, N_layers+2);
+    C = zeros(Length_frequency, N_layers+2);
+    D = zeros(Length_frequency, N_layers+2);
+    % 边界条件：在最后一层（空气）界面处，传播波向前的幅度为1，反向为0（两种极化分别设置）
+    A(:, end) = 1;
+    C(:, end) = 1;
+    B(:, end) = 0;
+    D(:, end) = 0;
+    % 从后向前递推计算各层的系数
+    % Y 和 Z 为界面处的阻抗比相关系数，对应垂直极化和水平极化
+    for n = (N_layers+1):-1:1  % n 从倒数第二层向前遍历到第1层
+        % 计算当前界面 (n 与 n+1 层交界) 的系数 Y 和 Z
+        % Y = (cosθ_{n+1}/cosθ_n) * sqrt(ε_{n+1}/ε_n)    （垂直极化）
+        % Z = (cosθ_{n+1}/cosθ_n) * sqrt(ε_n/ε_{n+1})    （水平极化）
+        Y = (cos_theta(:, n+1) ./ cos_theta(:, n)) .* sqrt(epsilon_abs(:, n+1) ./ epsilon_abs(:, n));
+        Z = (cos_theta(:, n+1) ./ cos_theta(:, n)) .* sqrt(epsilon_abs(:, n)   ./ epsilon_abs(:, n+1));
+        % 利用递推公式更新当前层的系数 A, B, C, D
+        A(:, n) = exp(phi(:, n)) / 2 .* ( A(:, n+1) .* (1 + Y) + B(:, n+1) .* (1 - Y) );
+        B(:, n) = exp(-phi(:, n)) / 2 .* ( A(:, n+1) .* (1 - Y) + B(:, n+1) .* (1 + Y) );
+        C(:, n) = exp(phi(:, n)) / 2 .* ( C(:, n+1) .* (1 + Z) + D(:, n+1) .* (1 - Z) );
+        D(:, n) = exp(-phi(:, n)) / 2 .* ( C(:, n+1) .* (1 - Z) + D(:, n+1) .* (1 + Z) );
     end
-phi(m,n)=d(m,n).*gama(m,n).*cos(theta(m,n));
-end
-end
-
-for m=1:Length_frequency   
-for n=N_layers+2:-1:1
-    if n==N_layers+2
-    A(m,n)=1;
-    C(m,n)=1;
-    B(m,n)=0;
-    D(m,n)=0;
-    elseif n<N_layers+2 
-Y(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n+1)./epsilon(m,n));
-Z(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n)./epsilon(m,n+1));  
-A(m,n)=exp(phi(m,n))./2.*(A(m,n+1).*(1+Y(m,n+1))+B(m,n+1).*(1-Y(m,n+1)));
-B(m,n)=exp(-phi(m,n))./2.*(A(m,n+1).*(1-Y(m,n+1))+B(m,n+1).*(1+Y(m,n+1)));
-C(m,n)=exp(phi(m,n))./2.*(C(m,n+1).*(1+Z(m,n+1))+D(m,n+1).*(1-Z(m,n+1)));
-D(m,n)=exp(-phi(m,n))./2.*(C(m,n+1).*(1-Z(m,n+1))+D(m,n+1).*(1+Z(m,n+1)));
-    end
-end
-end
- 
-RV=B(:,1)./A(:,1);
-RH=D(:,1)./C(:,1);
-TV=1./A(:,1);
-TH=1./C(:,1);
- 
-Reflection_vertical(:,num_type_wall)=RV; 
-Reflection_parallel(:,num_type_wall)=RH; 
-Transmission_vertical(:,num_type_wall)=TV; 
-Transmission_parallel(:,num_type_wall)=TH; 
-
-for nn=1:1:Length_frequency 
-    N_integral=1000;%积分N等分
-    n_theta=(pi/2-0)/N_integral; %分成N等份 N+1次求和
-    theta_i=0:n_theta:pi/2;%入射角用于积分求和
-    SUM_Solid_Angle_mean_R(nn,num_type_wall)=sum((1-1/2*(abs(Reflection_vertical(nn,num_type_wall)).^2+abs(Reflection_parallel(nn,num_type_wall)).^2)).*cos(theta_i).*sin(theta_i)).*n_theta;
-end
-
-%% 计算天花板和地砖
-% 天花板地砖结构为 石膏灰-混凝土-石膏灰
-elseif type_wall == 3
-    t=0;
-    d=zeros(Length_frequency,5);
-    epsilon_r = zeros(Length_frequency,3); % 清除上个材料的er值
-for k=[15 19 15] % —— Gypsum plaster (5mm), Concrete with small gravel(100mm), Gypsum plaster (5mm)
-ep=load('epsilon_paper_tabel.txt'); %20种材料的参数
-e_INF=ep(k,1);e_s=ep(k,2);sigma_s=ep(k,3);r_t=ep(k,4);arf=ep(k,5); %对应材料的cole-cole模型的参数
-w=2*pi*f;
-miu0=(4*pi)*1e-7;
-e0=1./(36*pi)*1e-9;
-e_c2=e_INF+(e_s-e_INF)./(1+power(1i*w*r_t,1-arf))+sigma_s./(1i*w*e0); % Cole-Cole
-RE=real(e_c2);
-IMG=-imag(e_c2);
-Tan_G=IMG./RE; 
-miu_2r=f./f.*1;%相对磁导率/为写入文档保证矩阵长度一致为*（f./f的单位矩阵）
-sigmma=f./f.*0;
-%% 读取data矩阵数据计算等效的电长度
-t=t+1;
-epsilon_r(:,t)=e_c2;
-end
-%% layers
-atmosphere = ones(size(epsilon_r, 1),1);
-epsilon_r=[atmosphere,epsilon_r,atmosphere];
-for m=1:Length_frequency  
-for n=1:N_layers+2
-    omega(:,n)=2*pi*f; 
-    epsilon(m,:)=e0.*epsilon_r(m,:);
-    gama(m,n)=1i*omega(m,n).*sqrt(epsilon(m,n).*miu0);
-    d(m,:)=[0,0.005,0.100,0.005,0];  % d 厚度，注意切换材料时这里需要更改，小砾石混凝土 No.19
-end
-end
-for m=1:Length_frequency
-for n=1:N_layers+2
-    if n==1
-        theta(m,n)=0/180*pi; 
-    else
-        theta(m,n)=asin(gama(m,n-1).*sin(theta(m,n-1))./gama(m,n));
-    end
-phi(m,n)=d(m,n).*gama(m,n).*cos(theta(m,n));
-end
-end
-
-for m=1:Length_frequency   
-for n=N_layers+2:-1:1
-    if n==N_layers+2
-    A(m,n)=1;
-    C(m,n)=1;
-    B(m,n)=0;
-    D(m,n)=0;
-    elseif n<N_layers+2 
-Y(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n+1)./epsilon(m,n));
-Z(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n)./epsilon(m,n+1));  
-A(m,n)=exp(phi(m,n))./2.*(A(m,n+1).*(1+Y(m,n+1))+B(m,n+1).*(1-Y(m,n+1)));
-B(m,n)=exp(-phi(m,n))./2.*(A(m,n+1).*(1-Y(m,n+1))+B(m,n+1).*(1+Y(m,n+1)));
-C(m,n)=exp(phi(m,n))./2.*(C(m,n+1).*(1+Z(m,n+1))+D(m,n+1).*(1-Z(m,n+1)));
-D(m,n)=exp(-phi(m,n))./2.*(C(m,n+1).*(1-Z(m,n+1))+D(m,n+1).*(1+Z(m,n+1)));
-    end
-end
-end
- 
-RV=B(:,1)./A(:,1);
-RH=D(:,1)./C(:,1);
-TV=1./A(:,1);
-TH=1./C(:,1);
- 
-Reflection_vertical(:,num_type_wall)=RV; 
-Reflection_parallel(:,num_type_wall)=RH; 
-Transmission_vertical(:,num_type_wall)=TV; 
-Transmission_parallel(:,num_type_wall)=TH; 
-
-
-for nn=1:1:Length_frequency 
-    N_integral=1000;%积分N等分
-    n_theta=(pi/2-0)/N_integral; %分成N等份 N+1次求和
-    theta_i=0:n_theta:pi/2;%入射角用于积分求和
-    SUM_Solid_Angle_mean_R(nn,num_type_wall)=sum((1-1/2*(abs(Reflection_vertical(nn,num_type_wall)).^2+abs(Reflection_parallel(nn,num_type_wall)).^2)).*cos(theta_i).*sin(theta_i)).*n_theta;
-end
-%% 计算加装玻璃的窗户
-% 玻璃的结构为了计算按照 glass-atmosphere-glass 计算
-elseif type_wall == 4
-    t=0;
-    d=zeros(Length_frequency,5);
-    epsilon_r = zeros(Length_frequency,3); % 清除上个材料的er值
-for k=[13 21 13] % ——  Glass 6 - 12 单层玻璃，厚度取6mm, 在epsilon_paper_tabel.txt中增加了材料21作为空气夹层
-ep=load('epsilon_paper_tabel.txt'); %20种材料的参数
-e_INF=ep(k,1);e_s=ep(k,2);sigma_s=ep(k,3);r_t=ep(k,4);arf=ep(k,5); %对应材料的cole-cole模型的参数
-w=2*pi*f;
-miu0=(4*pi)*1e-7;
-e0=1./(36*pi)*1e-9;
-e_c2=e_INF+(e_s-e_INF)./(1+power(1i*w*r_t,1-arf))+sigma_s./(1i*w*e0); % Cole-Cole
-RE=real(e_c2);
-IMG=-imag(e_c2);
-Tan_G=IMG./RE; 
-miu_2r=f./f.*1;%相对磁导率/为写入文档保证矩阵长度一致为*（f./f的单位矩阵）
-sigmma=f./f.*0;
-%% 读取data矩阵数据计算等效的电长度
-t=t+1;
-epsilon_r(:,t)=e_c2;
-end
-%% layers
-atmosphere = ones(size(epsilon_r, 1),1);
-epsilon_r=[atmosphere,epsilon_r,atmosphere];
-for m=1:Length_frequency  
-for n=1:N_layers+2
-    omega(:,n)=2*pi*f; 
-    epsilon(m,:)=e0.*epsilon_r(m,:);
-    gama(m,n)=1i*omega(m,n).*sqrt(epsilon(m,n).*miu0);
-    d(m,:)=[0,0.004,0.012,0.004,0];  % d 厚度，注意切换材料时这里需要更改，玻璃 No.13
-end
-end
-for m=1:Length_frequency
-for n=1:N_layers+2
-    if n==1
-        theta(m,n)=0/180*pi; 
-    else
-        theta(m,n)=asin(gama(m,n-1).*sin(theta(m,n-1))./gama(m,n));
-    end
-phi(m,n)=d(m,n).*gama(m,n).*cos(theta(m,n));
-end
-end
-
-for m=1:Length_frequency   
-for n=N_layers+2:-1:1
-    if n==N_layers+2
-    A(m,n)=1;
-    C(m,n)=1;
-    B(m,n)=0;
-    D(m,n)=0;
-    elseif n<N_layers+2 
-Y(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n+1)./epsilon(m,n));
-Z(m,n+1)=cos(theta(m,n+1))./cos(theta(m,n)).*sqrt(epsilon(m,n)./epsilon(m,n+1));  
-A(m,n)=exp(phi(m,n))./2.*(A(m,n+1).*(1+Y(m,n+1))+B(m,n+1).*(1-Y(m,n+1)));
-B(m,n)=exp(-phi(m,n))./2.*(A(m,n+1).*(1-Y(m,n+1))+B(m,n+1).*(1+Y(m,n+1)));
-C(m,n)=exp(phi(m,n))./2.*(C(m,n+1).*(1+Z(m,n+1))+D(m,n+1).*(1-Z(m,n+1)));
-D(m,n)=exp(-phi(m,n))./2.*(C(m,n+1).*(1-Z(m,n+1))+D(m,n+1).*(1+Z(m,n+1)));
-    end
-end
-end
- 
-RV=B(:,1)./A(:,1);
-RH=D(:,1)./C(:,1);
-TV=1./A(:,1);
-TH=1./C(:,1);
- 
-Reflection_vertical(:,num_type_wall)=RV; 
-Reflection_parallel(:,num_type_wall)=RH; 
-Transmission_vertical(:,num_type_wall)=TV; 
-Transmission_parallel(:,num_type_wall)=TH; 
-
-
-for nn=1:1:Length_frequency 
-    N_integral=1000;%积分N等分
-    n_theta=(pi/2-0)/N_integral; %分成N等份 N+1次求和
-    theta_i=0:n_theta:pi/2;%入射角用于积分求和
-    SUM_Solid_Angle_mean_R(nn,num_type_wall)=sum((1-1/2*(abs(Reflection_vertical(nn,num_type_wall)).^2+abs(Reflection_parallel(nn,num_type_wall)).^2)).*cos(theta_i).*sin(theta_i)).*n_theta;
-end
-%% 天花板和地砖按照单层计算，墙分承重墙和隔墙，分别按照[15 19 15] 和 [15 16 15] 计算
-% RoomA 
-d=3.28;
-w=3.14;
-h=2.782;
-
-% % RoomB 
-% d=6.8;
-% w=3.5;
-% h=2.78;
-
-% % 2019房间长宽高(这一部分是文献验证，不与其余代码混合，统一注释)
-% d= 9.1;
-% w= 4.8;
-% h= 4.1; 
-% S_all=195;
-% V = d*w*h; 
-% S_floor_celling = 2*d*w;
-% S_load_bearing_wall=0;
-% S_partition_wall = S_all-S_floor_celling - S_load_bearing_wall;
-% S_all_wall = S_partition_wall;
-% CCS_opt_load_bearing_wall=(S_load_bearing_wall).*SUM_Solid_Angle_mean_R(:,1)./2;
-% CCS_opt_S_partition_wall = S_partition_wall.*(SUM_Solid_Angle_mean_R(:,2))./2;
-% CCS_opt_floor_celling = S_floor_celling.*(SUM_Solid_Angle_mean_R(:,3))./2;
-% CCS_windows_door = 0; % 2019文献窗户和门的耦合损耗
-
-%% Room A and B
-V = d*w*h; 
-S_floor_celling = 2*d*w;
-S_all = 2*(d*h+d*w+h*w);   
-%% 模型精细化                                     
-% Room A 扣除飘窗屏蔽布的面积和门的屏蔽布面积
-% S_cloth=2.5*1.75+0.87*2.12;                                                      % Room A cloth
-S_cloth=0;                                                      % Room A cloth
-% Room A 承重墙面积
-S_load_bearing_wall = (1.23+1.8+1.27)*h;
-
-% % Room B 分别扣除了阳台、过道门、小窗、厨房门和正门屏蔽布的面积
-% S_cloth=2.35*2.3+1.08*2.46+0.85*1.36+1.57*2.1+1.54*2.37;  % Room B cloth
-% % Room B 承重墙面积
-% S_load_bearing_wall = (1.5+1.5+1.6+1)*h;
-
-S_partition_wall = S_all-S_floor_celling-S_cloth-S_load_bearing_wall;
-
-%% 计算隔墙的CCS 参考平面图，获取隔墙的面积 CCS=s*SUM*1/2，SUM 是立体角
-CCS_opt_load_bearing_wall=(S_load_bearing_wall).*SUM_Solid_Angle_mean_R(:,1)./2;
-CCS_opt_S_partition_wall = S_partition_wall.*(SUM_Solid_Angle_mean_R(:,2))./2;
-CCS_opt_floor_celling = S_floor_celling.*(SUM_Solid_Angle_mean_R(:,3))./2;
-CCS_windows = (2.5*1.75)*(SUM_Solid_Angle_mean_R(:,4))./2;
-CCS_door = (2.12*0.87)/2; % Room A 窗户和门的耦合损耗
-% 三部分CCS分开求和
-% CCS_opt = CCS_opt_load_bearing_wall + CCS_opt_S_partition_wall + CCS_opt_floor_celling;
-CCS_opt = CCS_opt_load_bearing_wall + CCS_opt_S_partition_wall + CCS_opt_floor_celling + CCS_windows + CCS_door;
-%% Reverberation time and Qd
-c=3e8; 
-t_rev=1e9*V./CCS_opt./c;
-
-% S_all_wall =S_all - S_cloth;
-f_GHz=f./1e9;
-% t_literature_2019=V*(-0.86.*f_GHz.^2+109.25.*f_GHz+29.49)./(2*pi.*f_GHz.*S_all_wall); % 单位 ns (1-40GHz)
-
-% Qd
-% Q_density_model = S_all_wall * (2*pi*f.*t_rev./1e9)./V;
-Q_density_model = 195 * (2*pi*f.*t_rev./1e9)./160;
-Q_density_literature_2019 = -0.86.*f_GHz.^2+109.25.*f_GHz+29.49;             % Ref[20](1-40GHz)
-end
+    
+    % 计算入射端口（第1层界面）的反射和透射系数 (垂直/水平极化)
+    RV = B(:,1) ./ A(:,1);   % 垂直极化反射系数（电场垂直于入射面）
+    RH = D(:,1) ./ C(:,1);   % 水平极化反射系数（电场平行于入射面）
+    TV = 1 ./ A(:,1);        % 垂直极化透射系数（透射到另一侧空气中的比例）
+    TH = 1 ./ C(:,1);        % 水平极化透射系数
+    
+    % 计算立体角平均功率比
+    % 反射方向：计算“仅反射能量损耗” (即未被反射的能量比例)
+    % 透射方向：计算“仅透射能量比例”
+    % 综合：计算“反射+透射总损耗” (即离开墙体的总能量比例)
+    N_integral = 1000;                     % 积分等分数
+    d_theta = (pi/2) / N_integral;         % 每份对应的角度增量
+    theta_i = 0 : d_theta : (pi/2);        % 从0到90°的积分角度划分
+    weight = cos(theta_i) .* sin(theta_i); % 积分权重因子 (cosθ * sinθ)
+    % 计算各频点的平均值（对每个频率点，反射/透射系数视为对各入射角相同）
+    reflect_power_fraction = 0.5 * ( abs(RV).^2 + abs(RH).^2 );  % 平均反射功率系数 (两种极化取平均)
+    transmit_power_fraction = 0.5 * ( abs(TV).^2 + abs(TH).^2 ); % 平均透射功率系数
+    % 执行数值积分（矩形法）: sum(weight) * d_theta = 0.5（半球立体角积分值）
+    integral_factor = sum(weight) * d_theta;
+    % 仅反射能量损耗：1 减去反射回来的比例 (即进入墙体的比例，包括透射+吸收)
+    SUM_Solid_Angle_mean_R   = (1 - reflect_power_fraction) * integral_factor;
+    % 仅透射能量比例：直接透射出去的比例
+    SUM_Solid_Angle_mean_T   = transmit_power_fraction * integral_factor;
+    % 综合反射+透射损耗：反射或透射离开墙体的总比例
+    SUM_Solid_Angle_mean_R_T = (reflect_power_fraction + transmit_power_fraction) * integral_factor;
 end
