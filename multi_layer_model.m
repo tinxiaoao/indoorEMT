@@ -3,7 +3,7 @@ function result = multi_layer_model(frequency, wall_type, wall_thickness_m, epsi
 %
 % Inputs:
 %   frequency        - Frequency vector (Hz)
-%   wall_type        - Integer indicating wall type (1=external wall, 2=internal wall, 3=ceiling/floor)
+%   wall_type        - Integer indicating wall type (1=external wall, 2=internal wall, 3=ceiling/floor, 4=glass window)
 %   wall_thickness_m - Main layer thickness (m)
 %   epsilon_params   - Material parameters matrix (N x 5), Cole-Cole parameters [e_inf, e_s, sigma_s, tau, alpha]
 %
@@ -31,6 +31,9 @@ switch wall_type
     case 3  % Ceiling/floor
         material_id_vector = [15, 19, 15];
         thicknesses = [0.005, 0.1, 0.005];
+    case 4  % Glass window
+        material_id_vector = [13, 21, 13];
+        thicknesses = [wall_thickness_m/2, 0.012, wall_thickness_m/2];
     otherwise
         error('Invalid wall_type specified.');
 end
