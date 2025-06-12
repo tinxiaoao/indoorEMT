@@ -37,7 +37,7 @@ wideTbl = roomWallSegments(roomTbl, topoTbl);
 edgeTbl = findRoomInterfaces(topoTbl, px2m, height_wall);
 
 %% 计算房间耦合矩阵
-[sigma_cpl, sigma_diag, ~] = computeRoomCouplingMatrix(edgeTbl, frequency, epsilon_params, height_wall);
+[sigma_cpl, sigma_diag] = computeRoomCouplingMatrix(edgeTbl, frequency, epsilon_params, height_wall);
 
 %% 构建完整传播矩阵
 M = assemblePropagationMatrix(sigma_loss, sigma_diag, sigma_cpl);
