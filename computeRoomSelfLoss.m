@@ -40,7 +40,6 @@ for i = 1:N
     % Call multi_layer_model for each component
     res_ext = multi_layer_model(frequency, 1, ext_thickness, epsilon_params);
     res_cf  = multi_layer_model(frequency, 3, 0.1, epsilon_params);
-
     sigma_ext = S_ext * res_ext.SUM_Solid_Angle_mean_R' / 2;
     sigma_cf  = S_cf  * res_cf.SUM_Solid_Angle_mean_R' / 2;
 
