@@ -20,7 +20,6 @@ for i = 1:N
     % External wall area and thickness
     S_ext = row.ExtWallLength_px * height_wall * px2m;
     ext_thickness = row.ExtWallWidth_px * px2m;
-    layer_thickness_ext = [0.005, ext_thickness, 0.005];
 
     % Internal wall area (per segment)
     sigma_int = zeros(1, numFreq);
@@ -31,19 +30,16 @@ for i = 1:N
         seg_length = row.(segLenCols{k}) * px2m;
         seg_thickness = row.(segWidCols{k}) * px2m;
         seg_area = seg_length * height_wall;
-        layer_thickness_int = [0.005, seg_thickness, 0.005];
-
-        res_int = multi_layer_model(frequency, 2, layer_thickness_int, epsilon_params);
+        res_int = multi_layer_model(frequency, 2, seg_thickness, epsilon_params);
         sigma_int = sigma_int + seg_area .* res_int.SUM_Solid_Angle_mean_R' / 2;
     end
 
     % Ceiling and floor area
     S_cf = row.Area_px * 2 * px2m^2;
-    layer_thickness_cf = [0.005, 0.1, 0.005];
 
     % Call multi_layer_model for each component
-    res_ext = multi_layer_model(frequency, 1, layer_thickness_ext, epsilon_params);
-    res_cf  = multi_layer_model(frequency, 3, layer_thickness_cf, epsilon_params);
+    res_ext = multi_layer_model(frequency, 1, ext_thickness, epsilon_params);
+    res_cf  = multi_layer_model(frequency, 3, 0.1, epsilon_params);
 
     sigma_ext = S_ext * res_ext.SUM_Solid_Angle_mean_R' / 2;
     sigma_cf  = S_cf  * res_cf.SUM_Solid_Angle_mean_R' / 2;
