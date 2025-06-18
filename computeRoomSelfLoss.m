@@ -19,7 +19,7 @@ for i = 1:N
 
     % External wall area and thickness
     S_ext = row.ExtWallLength_px * height_wall * px2m;
-    ext_thickness = row.ExtWallWidth_px * px2m;
+    ext_thickness = row.ExtWallWidth_px * px2m * 0.1;  % 0.1是系数修正，因为有些平面图外墙故意画的很粗，导致远超实际
 
     % Internal wall area (per segment)
     sigma_int = zeros(1, numFreq);

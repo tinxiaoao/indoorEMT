@@ -1,107 +1,109 @@
-function result = multi_layer_model(frequency, wall_type, wall_thickness_m, epsilon_params)
-% MULTI_LAYER_MODEL - Calculates mean solid angle reflection/transmission properties for layered walls
-%
-% Inputs:
-%   frequency        - Frequency vector (Hz)
-%   wall_type        - Integer indicating wall type (1=external wall, 2=internal wall, 3=ceiling/floor, 4=window)
-%   wall_thickness_m - Main layer thickness (m)
-%   epsilon_params   - Material parameters matrix (N x 5), Cole-Cole parameters [e_inf, e_s, sigma_s, tau, alpha]
-%
-% Outputs:
-%   result - Struct containing:
-%       SUM_Solid_Angle_mean_R
-%       SUM_Solid_Angle_mean_T
-%       SUM_Solid_Angle_mean_R_T
-%       RV, RH, TV, TH
+function result = multi_layer_model(frequency, wall_type, t_mid, epsTab)
+% MULTI_LAYER_MODEL  Strict Balanis (Sec. 5.4.4) implementation for a
+% 3-layer wall under oblique incidence (ASCII-only MATLAB).
+% -------------------------------------------------------------------------
+% frequency : column-vector [Hz]
+% wall_type : 1-external | 2-internal | 3-ceiling/floor | 4-window
+% t_mid     : mid-layer thickness [m] (for window = total glass thickness)
+% epsTab    : Cole-Cole parameter table  (N x 5)
+% -------------------------------------------------------------------------
+% Returns "result" structure with fields (size F x 1):
+%   SUM_Solid_Angle_mean_R   mean reflection solid-angle integral
+%   SUM_Solid_Angle_mean_T   mean transmission solid-angle integral
+%   SUM_Solid_Angle_mean_R_T SUM_R - SUM_T
+% -------------------------------------------------------------------------
 
-mu0 = 4*pi*1e-7;         % Vacuum permeability
-epsilon0 = 1/(36*pi)*1e-9; % Vacuum permittivity
+mu0  = 4*pi*1e-7;           % vacuum permeability
+eps0 = 1/(36*pi)*1e-9;      % vacuum permittivity
+f    = frequency(:);        % ensure column vector
+F    = numel(f);            % # frequency points
 
-f = frequency(:);
-omega = 2*pi*f;
-num_freq = length(f);
-
+%% --- layer definition ---------------------------------------------------
 switch wall_type
-    case 1  % External wall
-        material_id_vector = [15, 19, 15];
-        thicknesses = [0.005, wall_thickness_m, 0.005];
-    case 2  % Internal wall
-        material_id_vector = [15, 16, 15];
-        thicknesses = [0.005, wall_thickness_m, 0.005];
-    case 3  % Ceiling/floor
-        material_id_vector = [15, 19, 15];
-        thicknesses = [0.005, 0.1, 0.005];
-    case 4  % Window (glass-air-glass)
-        material_id_vector = [13, 21, 13];
-        air_gap = 0.012;
-        glass_thickness = (wall_thickness_m - air_gap)/2;
-        thicknesses = [glass_thickness, air_gap, glass_thickness];
+    case 1      % external wall  (15-19-15)
+        id = [15 19 15];  t = [0.005 t_mid 0.005];
+    case 2      % internal wall  (15-16-15)
+        id = [15 16 15];  t = [0.005 t_mid 0.005];
+    case 3      % ceiling / floor (15-19-15, mid=0.1 m)
+        id = [15 19 15];  t = [0.005 0.1 0.005];
+    case 4      % window glass-air-glass (13-21-13)
+        id = [13 21 13];
+        airGap = 0.012;
+        g      = (t_mid - airGap)/2;
+        t      = [g airGap g];
     otherwise
-        error('Invalid wall_type specified.');
+        error('wall_type must be 1-4');
+end
+L = 3;                             % # dielectric slabs
+
+%% --- epsilon_r(f) for each layer ---------------------------------------
+eps_r = zeros(F,L);
+for k = 1:L
+    p = epsTab(id(k),:);           % [e_inf e_s sigma_s tau alpha]
+    eps_r(:,k) = p(1) + (p(2)-p(1))./(1 + (1i*2*pi*f*p(4)).^(1-p(5))) ...
+                 + p(3)./(1i*2*pi*f*eps0);
 end
 
-N_integral = 1000;
-n_theta = (pi/2)/N_integral;
-theta_i = linspace(0, pi/2, N_integral);
+%% --- integrate over 0..pi/2 (1000 pts) ---------------------------------
+Ntheta = 1000;
+thetaV = linspace(0, pi/2, Ntheta);
+dTheta = thetaV(2) - thetaV(1);
 
-SUM_R = zeros(num_freq,1);
-SUM_T = zeros(num_freq,1);
-RV = zeros(num_freq, N_integral);
-RH = zeros(num_freq, N_integral);
-TV = zeros(num_freq, N_integral);
-TH = zeros(num_freq, N_integral);
+sumR = zeros(F,1);
+sumT = zeros(F,1);
 
-for theta_idx = 1:N_integral
-    theta = theta_i(theta_idx);
-    epsilon_layers = zeros(num_freq, 3);
-    for idx = 1:3
-        params = epsilon_params(material_id_vector(idx), :);
-        epsilon_layers(:, idx) = params(1) + (params(2)-params(1))./(1+(1i*omega*params(4)).^(1-params(5))) + params(3)./(1i*omega*epsilon0);
+dFull = [0 t 0];                 % include exterior air layers (1 x (L+2))
+epsAir = ones(F,1);
+
+omega = 2*pi*f;
+
+for theta = thetaV
+    % full permittivity stack (F x (L+2))
+    epsFull = [epsAir eps_r epsAir];
+
+    % propagation constant gamma (strictly without angle correction)
+    gamma = 1i * omega .* sqrt(mu0 * eps0 .* epsFull);
+
+    % Snell's law: compute angles theta_j
+    theta_j = zeros(F, L+2);
+    theta_j(:,1) = theta;
+    for n = 2:(L+2)
+        theta_j(:,n) = asin(sqrt(epsFull(:,n-1))./sqrt(epsFull(:,n)) .* sin(theta_j(:,n-1)));
     end
 
-    epsilon_r = [ones(num_freq,1), epsilon_layers, ones(num_freq,1)];
-    layer_thicknesses = [0, thicknesses, 0];
+    % phase thickness psi_j = d_j * gamma_j * cos(theta_j)
+    phi = gamma .* (dFull .* cos(theta_j));
 
-    gamma = 1i * omega .* sqrt(epsilon0 * mu0 .* epsilon_r - (sin(theta))^2);
-    phi = gamma .* layer_thicknesses;
+    % initialise ABCD (region Nst = L+2 is outer air)
+    Nst = L + 2;
+    A = ones(F,Nst);  B = zeros(F,Nst);
+    C = ones(F,Nst);  D = zeros(F,Nst);
 
-    A = ones(num_freq, 5);
-    B = zeros(num_freq, 5);
-    C = ones(num_freq, 5);
-    D = zeros(num_freq, 5);
+    for n = Nst-1:-1:1
+        Y = (cos(theta_j(:,n+1))./cos(theta_j(:,n))) .* sqrt(epsFull(:,n+1)./epsFull(:,n));
+        Z = (cos(theta_j(:,n+1))./cos(theta_j(:,n))) .* sqrt(epsFull(:,n)./epsFull(:,n+1));
 
-    for n = 4:-1:1
-        Y = sqrt(epsilon_r(:, n+1) ./ epsilon_r(:, n));
-        Z = sqrt(epsilon_r(:, n) ./ epsilon_r(:, n+1));
+        eP = exp(phi(:,n));
+        eM = exp(-phi(:,n));
 
-        exp_phi = exp(phi(:, n));
-        exp_minus_phi = exp(-phi(:, n));
-
-        A(:, n) = (exp_phi .* (A(:, n+1) .* (1+Y) + B(:, n+1) .* (1-Y))) / 2;
-        B(:, n) = (exp_minus_phi .* (A(:, n+1) .* (1-Y) + B(:, n+1) .* (1+Y))) / 2;
-
-        C(:, n) = (exp_phi .* (C(:, n+1) .* (1+Z) + D(:, n+1) .* (1-Z))) / 2;
-        D(:, n) = (exp_minus_phi .* (C(:, n+1) .* (1-Z) + D(:, n+1) .* (1+Z))) / 2;
+        A(:,n) = 0.5 .* eP .* ( A(:,n+1).*(1+Y) + B(:,n+1).*(1-Y) );
+        B(:,n) = 0.5 .* eM .* ( A(:,n+1).*(1-Y) + B(:,n+1).*(1+Y) );
+        C(:,n) = 0.5 .* eP .* ( C(:,n+1).*(1+Z) + D(:,n+1).*(1-Z) );
+        D(:,n) = 0.5 .* eM .* ( C(:,n+1).*(1-Z) + D(:,n+1).*(1+Z) );
     end
 
-    RV(:, theta_idx) = B(:,1)./A(:,1);
-    RH(:, theta_idx) = D(:,1)./C(:,1);
-    TV(:, theta_idx) = 1./A(:,1);
-    TH(:, theta_idx) = 1./C(:,1);
+    % Reflection / Transmission (Balanis equations 5-90, 5-91) 
+    % Note:  Equation 5-91 in book is wrong.
+    RV = B(:,1)./A(:,1);   TV = 1./A(:,1);   % perpendicular
+    RH = D(:,1)./C(:,1);   TH = 1./C(:,1);   % parallel
+
+    w = cos(theta)*sin(theta)*dTheta;
+    sumR = sumR + (1 - 0.5*(abs(RV).^2 + abs(RH).^2)).*w;
+    sumT = sumT + 0.5*(abs(TV).^2 + abs(TH).^2).*w;
 end
 
-for nn = 1:num_freq
-    reflect_integrand = (1 - 1/2*(abs(RV(nn,:)).^2 + abs(RH(nn,:)).^2)).*cos(theta_i).*sin(theta_i);
-    transmit_integrand = (1/2*(abs(TV(nn,:)).^2 + abs(TH(nn,:)).^2)).*cos(theta_i).*sin(theta_i);
+result.SUM_Solid_Angle_mean_R   = sumR;
+result.SUM_Solid_Angle_mean_T   = sumT;
+result.SUM_Solid_Angle_mean_R_T = sumR - sumT;
 
-    SUM_R(nn) = sum(reflect_integrand)*n_theta;
-    SUM_T(nn) = sum(transmit_integrand)*n_theta;
-end
-
-SUM_R_T = SUM_R - SUM_T;
-
-result = struct('SUM_Solid_Angle_mean_R', SUM_R, ...
-                'SUM_Solid_Angle_mean_T', SUM_T, ...
-                'SUM_Solid_Angle_mean_R_T', SUM_R_T, ...
-                'RV', RV(:,1), 'RH', RH(:,1), 'TV', TV(:,1), 'TH', TH(:,1));
 end

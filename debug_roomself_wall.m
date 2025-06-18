@@ -1,9 +1,8 @@
 % Debug and test the overall electromagnetic propagation system
-
 close all; clear; clc;
 
 %% 参数设置
-BASE_ID  = "1";
+BASE_ID  = "13";
 rootRoom = "E:/code/CubiCasa5k/output/roomself_excel";
 rootTopo = "E:/code/CubiCasa5k/output/topology_excel";
 
@@ -16,19 +15,19 @@ topoTbl = readtable(topoFile, 'VariableNamingRule', 'preserve');
 
 epsilon_params = load('epsilon_paper_tabel.txt');
 
-%% 转换系数 (示例: 已知实际面积和对应的像素面积)
-real_area = 55.5;   % 示例：20平方米
-pixel_area = 364620; % 示例：对应4000像素面积
-px2m = sqrt(real_area / pixel_area);
-
 %% 墙高设置
 height_wall = 2.2; % 墙高2.2米
 
 %% 频率设置
-frequency = (1e9:1e8:6e9)'; % 1GHz 到 6GHz，步进100MHz
+frequency = (0.2e9:1e8:67e9)'; % 1GHz 到 6GHz，步进100MHz
 
 %% 计算房间墙段信息
 wideTbl = roomWallSegments(roomTbl, topoTbl);
+
+%% 转换系数 (示例: 已知实际面积和对应的像素面积)
+real_area = 76.5;   % 示例：20平方米
+pixel_area = sum(wideTbl.Area_px); % 示例：对应像素面积
+px2m = sqrt(real_area / pixel_area);
 
 %% 计算房间自身损耗
 [sigma_loss, roomIDs] = computeRoomSelfLoss(wideTbl, frequency, px2m, height_wall, epsilon_params);
@@ -44,11 +43,11 @@ M = assemblePropagationMatrix(sigma_loss, sigma_diag, sigma_cpl);
 
 %% 定义输入源矩阵（示例：第一个房间0dBm，其他房间无源-Inf dBm）
 S_in_dBm = -Inf(size(roomIDs));
-S_in_dBm(1) = 0;
+S_in_dBm(roomIDs == "1") = 20;    % 字符串比较
+S_in_dBm(roomIDs == "3") = 0;
 
 %% 计算各房间稳态功率水平
-S_out_dBm = calculateRoomPowerLevels(M, S_in_dBm);
+E_V_per_m = calculateRoomPowerLevels(M, S_in_dBm);
 
 %% 显示结果
-resultTable = table(roomIDs, S_out_dBm, 'VariableNames', {'RoomID', 'SteadyStatePower_dBm'});
-disp(resultTable);
+resultTable = table(roomIDs, E_V_per_m, 'VariableNames', {'RoomID', 'SteadyStateE_v/m'});

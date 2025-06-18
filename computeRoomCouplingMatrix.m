@@ -27,13 +27,11 @@ for idx = 1:height(edgeTbl)
         SUM_T = ones(1,F); % 门视为开口，无材料损耗
     elseif strcmp(conn,'window')
         area = edgeTbl.Length_m(idx) * height_wall;
-        layer_vec = [width_m/2, 0.012, width_m/2];
-        res = multi_layer_model(frequency, 4, layer_vec, epsilon_params);
+        res = multi_layer_model(frequency, 4, width_m, epsilon_params);
         SUM_T = res.SUM_Solid_Angle_mean_T.'; 
     else % wall
         area = edgeTbl.Length_m(idx) * height_wall;
-        layer_vec = [0.005, width_m, 0.005];
-        res = multi_layer_model(frequency, 2, layer_vec, epsilon_params);
+        res = multi_layer_model(frequency, 2, width_m, epsilon_params);
         SUM_T = res.SUM_Solid_Angle_mean_T.';
     end
 
